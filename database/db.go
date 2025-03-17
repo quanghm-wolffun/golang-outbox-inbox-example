@@ -2,9 +2,10 @@ package database
 
 import (
 	"fmt"
+	"os"
+
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"os"
 )
 
 func NewConnection() (*gorm.DB, error) {

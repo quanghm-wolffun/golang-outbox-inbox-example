@@ -34,5 +34,30 @@ services:
       - .local.env
     command: [ "./worker" ]
 
+
+  worker2:
+    image: outbox-demo
+    container_name: outbox-demo-worker2
+    restart: on-failure
+    build:
+      context: .
+    env_file:
+      - .local.env
+    command: [ "./worker2" ]
+
+  test:
+    image: golang:1.23
+    container_name: outbox-demo-test
+    working_dir: /app
+    volumes:
+      - .:/app
+    env_file:
+      - .local.env
+    depends_on:
+      - app
+      - relay
+      - worker
+    command: [ "go", "test", "-v", "./..." ]
+
 networks:
   outbox:

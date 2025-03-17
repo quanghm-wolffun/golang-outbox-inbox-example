@@ -2,11 +2,12 @@ package shared
 
 import (
 	"encoding/json"
+	"log"
+	"time"
+
 	"github.com/streadway/amqp"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
-	"log"
-	"time"
 )
 
 type OutBoxMessage struct {
@@ -16,13 +17,15 @@ type OutBoxMessage struct {
 	IsProcessed bool           `gorm:"is_processed" json:"is_processed"`
 }
 
-type OutboxProcesser struct {
-	DB      *gorm.DB
-	Channel *amqp.Channel
-	Queue   amqp.Queue
+type OutboxProcessor struct {
+	DB           *gorm.DB
+	Channel      *amqp.Channel
+	Queue        amqp.Queue
+	Exchange     string
+	ExchangeType string
 }
 
-func (p *OutboxProcesser) HandleOutboxMessage() {
+func (p *OutboxProcessor) HandleOutboxMessage() {
 	messages := make([]OutBoxMessage, 0)
 	err := p.DB.
 		Where("is_processed = ?", false).
@@ -46,7 +49,7 @@ func (p *OutboxProcesser) HandleOutboxMessage() {
 			continue
 		}
 
-		// publish message to a queue
+		// publish a message to a queue
 		if err := p.publishMessage(b); err != nil {
 			log.Println("publish outbox message error: ", err)
 			continue
@@ -56,6 +59,7 @@ func (p *OutboxProcesser) HandleOutboxMessage() {
 	}
 
 	// Update processed messages in database
+	// If error, duplicate the messages -> handle at consumer with an inbox pattern
 	err = p.DB.Model(&OutBoxMessage{}).
 		Where("id IN ?", processedID).
 		UpdateColumn("is_processed", true).Error
@@ -67,12 +71,12 @@ func (p *OutboxProcesser) HandleOutboxMessage() {
 	log.Println("Published messages:", processedID)
 }
 
-func (p *OutboxProcesser) publishMessage(body []byte) error {
+func (p *OutboxProcessor) publishMessage(body []byte) error {
 	return p.Channel.Publish(
-		"",
-		p.Queue.Name,
-		false,
-		false,
+		p.Exchange, // fanout
+		"",         // routing key - empty for fanout exchange
+		false,      // mandatory
+		false,      // immediate
 		amqp.Publishing{
 			ContentType: "application/json",
 			Timestamp:   time.Now(),

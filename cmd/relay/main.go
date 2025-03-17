@@ -1,8 +1,6 @@
 package main
 
 import (
-	"github.com/joho/godotenv"
-	"github.com/robfig/cron/v3"
 	"io"
 	"log"
 	"os"
@@ -11,6 +9,9 @@ import (
 	"outbox/queue"
 	"outbox/shared"
 	"syscall"
+
+	"github.com/joho/godotenv"
+	"github.com/robfig/cron/v3"
 )
 
 func main() {
@@ -35,14 +36,53 @@ func main() {
 	}
 	defer closeConnection(ch)
 
-	q, err := ch.QueueDeclare(
-		"outbox",
-		false, false, false, false, nil)
+	// Declare a fanout exchange
+	exchangeName := "outbox_events"
+	err = ch.ExchangeDeclare(
+		exchangeName, // name
+		"fanout",     // type
+		true,         // durable
+		false,        // auto-deleted
+		false,        // internal
+		false,        // no-wait
+		nil,          // arguments
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare exchange: %v", err)
+	}
 
-	jobProcessor := shared.OutboxProcesser{
-		DB:      db,
-		Channel: ch,
-		Queue:   q,
+	// The queue declaration is still needed for compatibility
+	// Worker services will bind their own queues to this exchange
+	q, err := ch.QueueDeclare(
+		"outbox_fanout", // name (can be empty for exclusive queues)
+		true,            // durable
+		false,           // delete when unused
+		false,           // exclusive
+		false,           // no-wait
+		nil,             // arguments
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare queue: %v", err)
+	}
+
+	// Bind the queue to the exchange
+	err = ch.QueueBind(
+		q.Name,       // queue name
+		"",           // routing key - empty for fanout
+		exchangeName, // exchange
+		false,        // no-wait
+		nil,          // arguments
+	)
+	if err != nil {
+		log.Fatalf("Failed to bind queue: %v", err)
+	}
+
+	jobProcessor := shared.OutboxProcessor{
+		DB:           db,
+		Channel:      ch,
+		Queue:        q,
+		Exchange:     exchangeName,
+		ExchangeType: "fanout",
 	}
 
 	c := cron.New()
@@ -50,11 +90,11 @@ func main() {
 	if err != nil {
 		log.Fatal("register handler error", err)
 	}
-	log.Println("Start processing outbox messages")
+	log.Printf("Start processing outbox messages with fanout exchange: %s", exchangeName)
 	c.Start()
 	defer c.Stop()
 
-	// Wait for terminate signal
+	// Wait for terminated signal
 	kill := make(chan os.Signal, 1)
 	signal.Notify(kill, syscall.SIGINT, syscall.SIGTERM)
 	<-kill

@@ -2,8 +2,9 @@ package queue
 
 import (
 	"fmt"
-	"github.com/streadway/amqp"
 	"os"
+
+	"github.com/streadway/amqp"
 )
 
 func CreateConnection() (*amqp.Connection, error) {
